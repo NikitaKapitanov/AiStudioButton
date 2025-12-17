@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Google AI Studio - Улучшения интерфейса (v8.4)
+// @name         Google AI Studio - Улучшения интерфейса (v8.5)
 // @namespace    http://tampermonkey.net/
-// @version      8.4
+// @version      8.5
 // @description  Добавляет кнопку "Вставить текст" и издает 2-секундный звуковой сигнал по окончании генерации ответа. Устойчив к навигации в SPA.
 // @author       Your Name
 // @match        *://aistudio.google.com/*
@@ -15,7 +15,7 @@
     'use strict';
 
     /*
-     * Changelog v8.4:
+     * Changelog v8.5:
      * - Главный MutationObserver больше не отключается (obs.disconnect() удален).
      * - Скрипт теперь корректно работает при создании нового чата (SPA-навигация).
      * - Логика отслеживания кнопки "Run" адаптирована для пересоздания интерфейса.
