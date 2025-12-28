@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Google AI Studio - Улучшения интерфейса (v8.8)
+// @name         Google AI Studio - Улучшения интерфейса (v8.6)
 // @namespace    http://tampermonkey.net/
 // @version      8.6
 // @description  Добавляет кнопку "Вставить текст", издает звуковой сигнал по окончании генерации и устанавливает "Temperature" на 0.8 и "Top P" на 0.9 при смене модели. Устойчив к навигации в SPA.
