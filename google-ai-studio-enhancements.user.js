@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Google AI Studio - Улучшения интерфейса (v8.5)
+// @name         Google AI Studio - Улучшения интерфейса (v8.8)
 // @namespace    http://tampermonkey.net/
-// @version      8.5
-// @description  Добавляет кнопку "Вставить текст" и издает 2-секундный звуковой сигнал по окончании генерации ответа. Устойчив к навигации в SPA.
+// @version      8.6
+// @description  Добавляет кнопку "Вставить текст", издает звуковой сигнал по окончании генерации и устанавливает "Temperature" на 0.8 и "Top P" на 0.9 при смене модели. Устойчив к навигации в SPA.
 // @author       Your Name
 // @match        *://aistudio.google.com/*
 // @grant        none
@@ -15,11 +15,9 @@
     'use strict';
 
     /*
-     * Changelog v8.5:
-     * - Главный MutationObserver больше не отключается (obs.disconnect() удален).
-     * - Скрипт теперь корректно работает при создании нового чата (SPA-навигация).
-     * - Логика отслеживания кнопки "Run" адаптирована для пересоздания интерфейса.
-     * - Добавлена обратная совместимость для старой и новой версий UI.
+     * Changelog v8.6:
+     * - Значения "Temperature" и "Top P" устанавливаются один раз при смене модели.
+     * - Добавлено отслеживание смены модели через MutationObserver.
      */
 
     // =================================================================================
@@ -35,31 +33,19 @@
     `;
     const BUTTON_CONTAINER_ID = 'custom-insert-button-container';
 
-    /**
-     * Пытается найти все элементы и добавить кнопку "Вставить текст".
-     * Эта функция идемпотентна: она ничего не делает, если кнопка уже существует.
-     * Поддерживает как старую, так и новую версию интерфейса Google AI Studio.
-     * Возвращает true, если кнопка существует или была успешно добавлена.
-     */
     const tryToAddButton = () => {
-        // Проверка на идемпотентность: если кнопка уже есть, ничего не делаем.
         if (document.getElementById(BUTTON_CONTAINER_ID)) return true;
-
         const textareaElement = document.querySelector(TEXTAREA_SELECTOR);
         if (!textareaElement) return false;
 
         let parentForInsertion = null;
         let referenceElement = null;
 
-        // --- 1. Попытка для НОВОЙ версии интерфейса ---
-        // В новой версии кнопка "Add Media" (ms-add-media-button) находится внутри .button-wrapper
         const newUIAddButton = document.querySelector('ms-add-media-button');
         if (newUIAddButton) {
-            parentForInsertion = newUIAddButton.parentElement; // Это .button-wrapper
+            parentForInsertion = newUIAddButton.parentElement;
             referenceElement = newUIAddButton;
-        }
-        // --- 2. Попытка для СТАРОЙ версии интерфейса (если новая не сработала) ---
-        if (!parentForInsertion) {
+        } else {
             const oldUIAddButton = document.querySelector('ms-add-chunk-menu');
             const oldMainContainer = textareaElement.closest('.prompt-input-wrapper-container');
             if (oldUIAddButton && oldMainContainer) {
@@ -67,8 +53,6 @@
                 referenceElement = oldUIAddButton.closest('.button-wrapper');
             }
         }
-
-        // Если ни одна структура не опознана, выходим
         if (!parentForInsertion || !referenceElement) return false;
 
         console.log('[Tampermonkey] UI для кнопки найден. Создание кнопки.');
@@ -81,16 +65,7 @@
 
         const button = document.createElement('button');
         button.textContent = BUTTON_TEXT;
-        button.style.padding = '4px 8px';
-        button.style.height = '32px';
-        button.style.border = '1px solid #5f6368';
-        button.style.borderRadius = '16px';
-        button.style.cursor = 'pointer';
-        button.style.backgroundColor = '#3c4043';
-        button.style.color = '#e8eaed';
-        button.style.fontSize = '12px';
-        button.style.whiteSpace = 'nowrap';
-
+        button.style.cssText = 'padding: 4px 8px; height: 32px; border: 1px solid #5f6368; border-radius: 16px; cursor: pointer; background-color: #3c4043; color: #e8eaed; font-size: 12px; white-space: nowrap;';
         button.onmouseover = () => button.style.backgroundColor = '#4a4e51';
         button.onmouseout = () => button.style.backgroundColor = '#3c4043';
 
@@ -100,14 +75,12 @@
             if (currentTextarea && currentTextarea.value.trim() === '') {
                 currentTextarea.value = TEXT_TO_INSERT;
                 currentTextarea.focus();
-                const inputEvent = new Event('input', { bubbles: true });
-                currentTextarea.dispatchEvent(inputEvent);
+                currentTextarea.dispatchEvent(new Event('input', { bubbles: true }));
             }
         });
 
         buttonWrapper.appendChild(button);
         parentForInsertion.insertBefore(buttonWrapper, referenceElement);
-
         console.log('[Tampermonkey] Кнопка "Вставить текст" успешно встроена.');
         return true;
     };
@@ -117,10 +90,6 @@
     // =================================================================================
 
     let isGenerating = false;
-
-    /**
-     * Издает звуковой сигнал.
-     */
     let audioContext;
     try {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -143,40 +112,23 @@
         oscillator.stop(audioContext.currentTime + duration);
     };
 
-    /**
-     * Отслеживает состояние кнопки "Run" для определения завершения генерации.
-     * Работает с новой и старой версиями интерфейса.
-     */
     const checkGenerationStatus = () => {
         let isCurrentlyGenerating = false;
-
-        // 1. Проверка для НОВОЙ версии интерфейса (приоритет).
-        // Ищем спиннер, который появляется во время генерации.
         const spinner = document.querySelector('ms-run-button button span.spin');
-
         if (spinner) {
             isCurrentlyGenerating = true;
         } else {
-            // 2. Проверка для СТАРОЙ версии интерфейса (запасной вариант).
-            // Ищем иконку "стоп" или заблокированную кнопку с текстом "Stop".
             const stopIcon = document.querySelector('mat-icon[fonticon="stop"]');
             const runButton = document.querySelector('ms-run-button button');
-
             const isOldUiGenerating = stopIcon || (runButton && (runButton.disabled || runButton.getAttribute('aria-disabled') === 'true') && runButton.textContent.includes('Stop'));
-
             if (isOldUiGenerating) {
                 isCurrentlyGenerating = true;
             }
         }
-
-        // Логика смены состояний: звук воспроизводится только при переходе
-        // из состояния "генерирует" в "не генерирует".
         if (!isGenerating && isCurrentlyGenerating) {
             console.log('[Tampermonkey] Генерация началась.');
             isGenerating = true;
-        }
-        else if (isGenerating && !isCurrentlyGenerating) {
-
+        } else if (isGenerating && !isCurrentlyGenerating) {
             console.log('[Tampermonkey] Генерация завершена. Сигнал.');
             isGenerating = false;
             playNotificationSound();
@@ -184,23 +136,78 @@
     };
 
     // =================================================================================
+    // --- ФУНКЦИЯ 3: УСТАНОВКА ПАРАМЕТРОВ ПРИ СМЕНЕ МОДЕЛИ ---
+    // =================================================================================
+
+    const TEMPERATURE_SLIDER_SELECTOR = '[data-test-id="temperatureSliderContainer"] input.mdc-slider__input';
+    const TARGET_TEMP_VALUE = '0.8';
+
+    const TOP_P_SLIDER_SELECTOR = '[mattooltip="Probability threshold for top-p sampling"] input.mdc-slider__input';
+    const TARGET_TOP_P_VALUE = '0.9';
+
+    const MODEL_NAME_SELECTOR = 'ms-model-selector .model-selector-card .title';
+    let lastAppliedModel = null;
+
+    /**
+     * Принудительно устанавливает значение для указанного слайдера.
+     * @param {string} selector - CSS-селектор для input-элемента слайдера.
+     * @param {string} targetValue - Целевое значение в виде строки.
+     * @param {string} sliderName - Имя слайдера для логирования.
+     */
+    const forceSetValue = (selector, targetValue, sliderName) => {
+        const slider = document.querySelector(selector);
+        if (!slider) return;
+
+        // Небольшая задержка, чтобы дать Angular время обновить UI после смены модели
+        setTimeout(() => {
+            if (slider.value !== targetValue) {
+                console.log(`[Tampermonkey] ${sliderName} is ${slider.value}. Forcing to ${targetValue}.`);
+                slider.value = targetValue;
+                slider.dispatchEvent(new Event('input', { bubbles: true }));
+                slider.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }, 100); // 100мс обычно достаточно
+    };
+
+    /**
+     * Проверяет, изменилась ли модель, и если да, применяет настройки.
+     */
+    const checkModelAndApplySettings = () => {
+        const modelNameElement = document.querySelector(MODEL_NAME_SELECTOR);
+        if (!modelNameElement) return;
+
+        const currentModelName = modelNameElement.textContent.trim();
+
+        // Если модель изменилась с момента последнего применения настроек
+        if (currentModelName && currentModelName !== lastAppliedModel) {
+            console.log(`[Tampermonkey] Модель изменена на "${currentModelName}". Применяем настройки.`);
+
+            forceSetValue(TEMPERATURE_SLIDER_SELECTOR, TARGET_TEMP_VALUE, 'Temperature');
+            forceSetValue(TOP_P_SLIDER_SELECTOR, TARGET_TOP_P_VALUE, 'Top P');
+
+            // Запоминаем модель, для которой применили настройки
+            lastAppliedModel = currentModelName;
+        }
+    };
+
+    // =================================================================================
     // --- ИНИЦИАЛИЗАЦИЯ И НАБЛЮДЕНИЕ ---
     // =================================================================================
 
-    /**
-     * Основной цикл наблюдения за изменениями DOM.
-     */
     const observer = new MutationObserver(() => {
         tryToAddButton();
         checkGenerationStatus();
+        checkModelAndApplySettings(); // <-- Эта функция теперь проверяет смену модели
     });
 
-    // Начинаем наблюдение за всем документом, так как это SPA
     observer.observe(document.body, {
         childList: true,
-        subtree: true
+        subtree: true,
+        characterData: true // Важно для отслеживания изменения текста в элементе с названием модели
     });
 
     // Первая попытка запуска при загрузке
     tryToAddButton();
+    // Первый вызов для установки значений при загрузке страницы
+    checkModelAndApplySettings();
 })();
